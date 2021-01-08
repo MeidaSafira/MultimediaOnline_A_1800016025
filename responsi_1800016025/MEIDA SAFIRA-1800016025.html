@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+	<title>MEIDA SAFIRA-1800016025</title>
+<script>
+
+	window.onload = function() {
+    // canvas
+    var canvas = document.getElementById("viewport");
+    var context = canvas.getContext("2d");
+    
+    // setting waktu dan frame per detik
+    var lastframe = 0;
+    var fpstime = 0;
+    var framecount = 0;
+    var fps = 0;
+    
+    var initialized = false;
+    
+    // Level
+    var level = {
+    	x: 400, y: 104, width: 0, height: 0, columns: 15, rows: 14,
+    	tilewidth: 40, tileheight: 40, rowheight: 34, radius: 20,  
+    	tiles: []  
+        
+    };
+
+    // menentukan kls tile
+    var Tile = function(x, y, type, shift) {
+        this.x = x;
+        this.y = y;
+        this.type = type;
+        this.removed = false;
+        this.shift = shift;
+        this.velocity = 0;
+        this.alpha = 1;
+        this.processed = false;
+    };
+    
+    // Pemain
+    var player = {
+        x: 0,
+        y: 0,
+        angle: 0,
+        tiletype: 0,
+        bubble: {x: 0, y: 0, angle: 0, speed: 1000,dropspeed: 900,
+                tiletype: 0,visible: false},
+        nextbubble: { x: 0, y: 0, tiletype: 0
+        } 
+    };
+            
+    var neighborsoffsets = [[[1, 0], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1]],
+                            [[1, 0], [1, 1], [0, 1], [-1, 0], [0, -1], [1, -1]]];  
+    
+    // Jumlah warna berbeda
+    var bubblecolors = 7;
+    
+    // status permainan
+    var gamestates = { init: 0, ready: 1, shootbubble: 2, removecluster: 3, gameover: 4 };
+    var gamestate = gamestates.init;
+    
+    // Score
+    var score = 0;
+    var turncounter = 0;
+    var rowoffset = 0;
+    
+    // variable Animasi
+    var animationstate = 0;
+    var animationtime = 0;
+    
+    // Clusters
+    var showcluster = false;
+    var cluster = [];
+    var floatingclusters = [];
+    
+    // Images
+    var images = [];
+    var bubbleimage;
+    
+    // Image loading global variables
+    var loadcount = 0;
+    var loadtotal = 0;
+    var preloaded = false;
+    
+    // Load images
+    function loadImages(imagefiles) {
+        // Initialize variables
+        loadcount = 0;
+        loadtotal = imagefiles.length;
+        preloaded = false;
+        
+        // Load the images
+        var loadedimages = [];
+        for (var i=0; i<imagefiles.length; i++) {
+            // Buat objek gambar
+            var image = new Image();
+            
+            // Tambah onload event handler
+            image.onload = function () {
+                loadcount++;
+                if (loadcount == loadtotal) {
+                    // Selesai loading
+                    preloaded = true;
+                }
+            };
+            
+            // Mengatur url sumber gambar
+            image.src = imagefiles[i];
+            
+            // menyimpan gambar array
+            loadedimages[i] = image;
+        }
+        
+        // Return an array of images
+        return loadedimages;
+    }
+    
+    // Initialize permainan
+    function init() {
+        // Load images
+        images = loadImages(["bola_emoticon.png"]);
+        bubbleimage = images[0];
+    
+        // menambahkan mouse events
+        canvas.addEventListener("mousemove", onMouseMove);
+        canvas.addEventListener("mousedown", onMouseDown);
+        
+        // Initialize 2 dimensi array tile
+        for (var i=0; i<level.columns; i++) {
+            level.tiles[i] = [];
+            for (var j=0; j<level.rows; j++) {
+                // Menentkan jenis tile dan parameter shift untuk animasi
+                level.tiles[i][j] = new Tile(i, j, 0, 0);
+            }
+        }
+        
+        level.width = level.columns * level.tilewidth + level.tilewidth/2;
+        level.height = (level.rows-1) * level.rowheight + level.tileheight;
+        
+        // Init pemain
+        player.x = level.x + level.width/2 - level.tilewidth/2;
+        player.y = level.y + level.height;
+        player.angle = 90;
+        player.tiletype = 0;
+        
+        player.nextbubble.x = player.x - 2 * level.tilewidth;
+        player.nextbubble.y = player.y;
+        
+        newGame(); // game baru
+        main(0); // Masuk loop utama
+    }
+    
+    // loop utama
+    function main(tframe) {
+        // meamnggil frame animasi
+        window.requestAnimationFrame(main);
+    
+        if (!initialized) {          
+            // Membersihkan canvas
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            drawFrame();// gambar frame
+            
+            // gambar progress bar
+            var loadpercentage = loadcount/loadtotal;
+            context.strokeStyle = "#4B0082";
+            context.lineWidth=3;
+            context.strokeRect(18.5, 0.5 + canvas.height - 51, canvas.width-37, 32);
+            context.fillStyle = "#4B0082";
+            context.fillRect(18.5, 0.5 + canvas.height - 51, loadpercentage*(canvas.width-37), 32);
+            
+            // gambar the progress text
+            var loadtext = "Loading gan ";
+            context.fillStyle = "#4B0082";
+            context.font = "16px Verdana";
+            context.fillText(loadtext, 18, 0.5 + canvas.height - 63);
+            
+            if (preloaded) {
+                setTimeout(function(){initialized = true;}, 1000);
+            }
+        } else {
+            update(tframe);
+            render();
+        }
+    }
+    
+    // Perbarui status permainan
+    function update(tframe) {
+        var dt = (tframe - lastframe) / 1000;
+        lastframe = tframe;
+        
+        // Update fps counter
+        updateFps(dt);
+        
+        if (gamestate == gamestates.ready) {
+        } else if (gamestate == gamestates.shootbubble) {
+            stateShootBubble(dt);
+        } else if (gamestate == gamestates.removecluster) {
+            stateRemoveCluster(dt);
+        }
+    }
+    
+    function setGameState(newgamestate) {
+        gamestate = newgamestate;   
+        animationstate = 0;
+        animationtime = 0;
+    }
+    
+    function stateShootBubble(dt) {
+        // Gerakan bola emoticon kearah mouse
+        player.bubble.x += dt * player.bubble.speed * Math.cos(degToRad(player.bubble.angle));
+        player.bubble.y += dt * player.bubble.speed * -1*Math.sin(degToRad(player.bubble.angle));
+        
+        if (player.bubble.x <= level.x) {
+            // tepi kiri
+            player.bubble.angle = 180 - player.bubble.angle;
+            player.bubble.x = level.x;
+        } else if (player.bubble.x + level.tilewidth >= level.x + level.width) {
+            // tepi kanan
+            player.bubble.angle = 180 - player.bubble.angle;
+            player.bubble.x = level.x + level.width - level.tilewidth;
+        }
+ 
+        if (player.bubble.y <= level.y) {
+            player.bubble.y = level.y;
+            snapBubble();
+            return;
+        }
+        
+        for (var i=0; i<level.columns; i++) {
+            for (var j=0; j<level.rows; j++) {
+                var tile = level.tiles[i][j];
+                // Lewati tile kosong
+                if (tile.type < 0) {
+                    continue;
+                }
+                var coord = getTileCoordinate(i, j);
+                if (circleIntersection(player.bubble.x + level.tilewidth/2,
+                                       player.bubble.y + level.tileheight/2,
+                                       level.radius,
+                                       coord.tilex + level.tilewidth/2,
+                                       coord.tiley + level.tileheight/2,
+                                       level.radius)) {                
+                    snapBubble();
+                    return;
+                }}}
+    }
+    
+    function stateRemoveCluster(dt) {
+        if (animationstate == 0) {
+            resetRemoved();
+            for (var i=0; i<cluster.length; i++) {
+                cluster[i].removed = true;
+            }
+            
+            // tambahkan score
+            score += cluster.length * 100;
+
+            floatingclusters = findFloatingClusters();
+            
+            if (floatingclusters.length > 0) {
+                // Setup hapus animasi
+                for (var i=0; i<floatingclusters.length; i++) {
+                    for (var j=0; j<floatingclusters[i].length; j++) {
+                        var tile = floatingclusters[i][j];
+                        tile.shift = 0;
+                        tile.shift = 1;
+                        tile.velocity = player.bubble.dropspeed;
+                        
+                        score += 100;
+                    }
+                }
+            }
+            
+            animationstate = 1;
+        }
+        
+        if (animationstate == 1) {
+            var tilesleft = false;
+            for (var i=0; i<cluster.length; i++) {
+                var tile = cluster[i];
+                
+                if (tile.type >= 0) {
+                    tilesleft = true;
+                    
+                    tile.alpha -= dt * 15;
+                    if (tile.alpha < 0) {
+                        tile.alpha = 0;
+                    }
+
+                    if (tile.alpha == 0) {
+                        tile.type = -1;
+                        tile.alpha = 1;
+                    }
+                }                
+            }
+            
+            // hapus bola emoticon
+            for (var i=0; i<floatingclusters.length; i++) {
+                for (var j=0; j<floatingclusters[i].length; j++) {
+                    var tile = floatingclusters[i][j];
+                    
+                    if (tile.type >= 0) {
+                        tilesleft = true;
+                        
+                        // mempercepat tile yang jatuh
+                        tile.velocity += dt * 700;
+                        tile.shift += dt * tile.velocity;
+                            
+                        // Alpha animasin
+                        tile.alpha -= dt * 8;
+                        if (tile.alpha < 0) {
+                            tile.alpha = 0;
+                        }
+
+                        // Periksa apakah bola emoticon sudah melewati bagian bawah level
+                        if (tile.alpha == 0 || (tile.y * level.rowheight + tile.shift > (level.rows - 1) * level.rowheight + level.tileheight)) {
+                            tile.type = -1;
+                            tile.shift = 0;
+                            tile.alpha = 1;
+                        }
+                    }
+
+                }
+            }
+            
+            if (!tilesleft) {
+                // bola emoticon selanjutnya
+                nextBubble();
+                
+                // Periksa game berakhir
+                var tilefound = false
+                for (var i=0; i<level.columns; i++) {
+                    for (var j=0; j<level.rows; j++) {
+                        if (level.tiles[i][j].type != -1) {
+                            tilefound = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if (tilefound) {
+                    setGameState(gamestates.ready);
+                } else {
+                    // Tidak ada tile tersisa, permainan selesai
+                    setGameState(gamestates.gameover);
+                }
+            }
+        }
+    }
+    
+    // Snap bola emoticon ke grid
+    function snapBubble() {
+        // memperoleh posisi grid
+        var centerx = player.bubble.x + level.tilewidth/2;
+        var centery = player.bubble.y + level.tileheight/2;
+        var gridpos = getGridPosition(centerx, centery);
+
+        // Pastikan posisi grid valid
+        if (gridpos.x < 0) {
+            gridpos.x = 0;
+        }
+            
+        if (gridpos.x >= level.columns) {
+            gridpos.x = level.columns - 1;
+        }
+
+        if (gridpos.y < 0) {
+            gridpos.y = 0;
+        }
+            
+        if (gridpos.y >= level.rows) {
+            gridpos.y = level.rows - 1;
+        }
+
+        // Periksa apakah tile kosong
+        var addtile = false;
+        if (level.tiles[gridpos.x][gridpos.y].type != -1) {
+            // Tile tidak kosong, geser tile baru ke bawah
+            for (var newrow=gridpos.y+1; newrow<level.rows; newrow++) {
+                if (level.tiles[gridpos.x][newrow].type == -1) {
+                    gridpos.y = newrow;
+                    addtile = true;
+                    break;
+                }
+            }
+        } else {
+            addtile = true;
+        }
+
+        // Tambahkan tile ke kisi
+        if (addtile) {
+            // Sembunyikan bola emoticon pemain
+            player.bubble.visible = false;
+        
+            // atur tile
+            level.tiles[gridpos.x][gridpos.y].type = player.bubble.tiletype;
+            
+            // Periksa game berakhir
+            if (checkGameOver()) {
+                return;
+            }
+            
+            // Mencari clusters
+            cluster = findCluster(gridpos.x, gridpos.y, true, true, false);
+            
+            if (cluster.length >= 3) {
+                // Hapus cluster
+                setGameState(gamestates.removecluster);
+                return;
+            }
+        }
+        
+        // tidak ada clusters yg ditemukan
+        turncounter++;
+        if (turncounter >= 5) {
+            // tambah baris gelembung emoticon
+            addBubbles();
+            turncounter = 0;
+            rowoffset = (rowoffset + 1) % 2;
+            
+            if (checkGameOver()) {
+                return;
+            }
+        }
+
+        // bola emoticon selanjutnya
+        nextBubble();
+        setGameState(gamestates.ready);
+    }
+    
+    function checkGameOver() {
+        // Periksa game berakhir
+        for (var i=0; i<level.columns; i++) {
+            // Periksa apakah ada bola emoticon di baris bawah
+            if (level.tiles[i][level.rows-1].type != -1) {
+                // permainan berakhir
+                nextBubble();
+                setGameState(gamestates.gameover);
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    function addBubbles() {
+        // Pindahkan baris ke bawah
+        for (var i=0; i<level.columns; i++) {
+            for (var j=0; j<level.rows-1; j++) {
+                level.tiles[i][level.rows-1-j].type = level.tiles[i][level.rows-1-j-1].type;
+            }
+        }
+        
+        // Tambahkan deretan bola emoticon baru di atas
+        for (var i=0; i<level.columns; i++) {
+            // Tambahkan warna acak, yang sudah ada
+            level.tiles[i][0].type = getExistingColor();
+        }
+    }
+    
+    // Temukan warna yang tersisa
+    function findColors() {
+        var foundcolors = [];
+        var colortable = [];
+        for (var i=0; i<bubblecolors; i++) {
+            colortable.push(false);
+        }
+        
+        // memeriksa semua tile
+        for (var i=0; i<level.columns; i++) {
+            for (var j=0; j<level.rows; j++) {
+                var tile = level.tiles[i][j];
+                if (tile.type >= 0) {
+                    if (!colortable[tile.type]) {
+                        colortable[tile.type] = true;
+                        foundcolors.push(tile.type);
+                    }
+                }
+            }
+        }
+        
+        return foundcolors;
+    }
+    
+    // Temukan cluster di lokasi tile yang ditentukan
+    function findCluster(tx, ty, matchtype, reset, skipremoved) {
+        // Reset proses flags
+        if (reset) {
+            resetProcessed();
+        }
+        
+        // Dapatkan tile target. Coordinat tile harus valid.
+        var targettile = level.tiles[tx][ty];
+        
+        // Inisialisasi array process dengan tile yang ditentukan
+        var toprocess = [targettile];
+        targettile.processed = true;
+        var foundcluster = [];
+
+        while (toprocess.length > 0) {
+            // Pop elemen terakhir dari array
+            var currenttile = toprocess.pop();
+            
+            // Lewati tile yang diproses dan kosongkan
+            if (currenttile.type == -1) {
+                continue;
+            }
+            
+            // Lewati tile dengan flag dihapus
+            if (skipremoved && currenttile.removed) {
+                continue;
+            }
+            
+            // Periksa apakah tilesaat ini memiliki jenis yang benar, jika jenis kecocokan benar
+            if (!matchtype || (currenttile.type == targettile.type)) {
+                // Tambahkan tile saat ini ke cluster
+                foundcluster.push(currenttile);
+                
+                // dapatkan neighbors tile saat ini
+                var neighbors = getNeighbors(currenttile);
+                
+                // Periksa tipe neighbors masing-masing
+                for (var i=0; i<neighbors.length; i++) {
+                    if (!neighbors[i].processed) {
+                        // tambahkan neighbor ke toprocess array
+                        toprocess.push(neighbors[i]);
+                        neighbors[i].processed = true;
+                    }
+                }
+            }
+        }
+        
+        // Kembalikan cluster yang ditemukan
+        return foundcluster;
+    }
+    
+    // menemukan floating clusters
+    function findFloatingClusters() {
+        // setel ulang processed flags
+        resetProcessed();
+        
+        var foundclusters = [];
+        
+        // Memeriksa semua tiles
+        for (var i=0; i<level.columns; i++) {
+            for (var j=0; j<level.rows; j++) {
+                var tile = level.tiles[i][j];
+                if (!tile.processed) {
+                    // Temukan semua tile yang terpasang
+                    var foundcluster = findCluster(i, j, false, false, true);
+                    
+                    // Harus ada tile di cluster
+                    if (foundcluster.length <= 0) {
+                        continue;
+                    }
+                    
+                    // Periksa apakah cluster mengambang
+                    var floating = true;
+                    for (var k=0; k<foundcluster.length; k++) {
+                        if (foundcluster[k].y == 0) {
+                            // Tile is dipasang ke atas
+                            floating = false;
+                            break;
+                        }
+                    }
+                    
+                    if (floating) {
+                        // Menemukan floating cluster
+                        foundclusters.push(foundcluster);
+                    }
+                }
+            }
+        }
+        
+        return foundclusters;
+    }
+    
+    // Memasang kembali processed flags
+    function resetProcessed() {
+        for (var i=0; i<level.columns; i++) {
+            for (var j=0; j<level.rows; j++) {
+                level.tiles[i][j].processed = false;
+            }
+        }
+    }
+    
+    // Reset flags yang dihapus
+    function resetRemoved() {
+        for (var i=0; i<level.columns; i++) {
+            for (var j=0; j<level.rows; j++) {
+                level.tiles[i][j].removed = false;
+            }
+        }
+    }
+    
+    function getNeighbors(tile) {
+        var tilerow = (tile.y + rowoffset) % 2; 
+        var neighbors = [];
+        
+        var n = neighborsoffsets[tilerow];
+        
+        // memperoleh neighbors
+        for (var i=0; i<n.length; i++) {
+            // coordinate Neighbor 
+            var nx = tile.x + n[i][0];
+            var ny = tile.y + n[i][1];
+            
+            // Pastikan tile tersebut valid
+            if (nx >= 0 && nx < level.columns && ny >= 0 && ny < level.rows) {
+                neighbors.push(level.tiles[nx][ny]);
+            }
+        }
+        
+        return neighbors;
+    }
+    
+    function updateFps(dt) {
+        if (fpstime > 0.25) {
+            // Menghitung fps
+            fps = Math.round(framecount / fpstime);
+            
+            // Setel ulang waktu dan framecount
+            fpstime = 0;
+            framecount = 0;
+        }
+        
+        // Tingkatkan waktu dan framecount
+        fpstime += dt;
+        framecount++;
+    }
+    
+    // Gambar teks yang berada di tengah
+    function drawCenterText(text, x, y, width) {
+        var textdim = context.measureText(text);
+        context.fillText(text, x + (width-textdim.width)/2, y);
+    }
+    
+    // Render permainan
+    function render() {
+        drawFrame();      
+        var yoffset =  level.tileheight/2;
+        
+        //background
+        context.fillStyle = "#800080";
+        context.fillRect(level.x - 4, level.y - 4, level.width + 8, level.height + 4 - yoffset);
+        
+        // Render tiles
+        renderTiles();
+        
+        // gambar level bawah
+        context.fillStyle = "#DDA0DD";
+        context.fillRect(level.x - 4, level.y - 4 + level.height + 4 - yoffset, level.width + 8, 2*level.tileheight + 3);
+        
+        // score
+        context.fillStyle = "#8B008B";
+        context.font = "18px Verdana";
+        var scorex = level.x + level.width - 150;
+        var scorey = level.y+level.height + level.tileheight - yoffset - 8;
+        drawCenterText("Score:", scorex, scorey, 150);
+        context.font = "24px Verdana";
+        drawCenterText(score, scorex, scorey+30, 150);
+
+        // Render cluster
+        if (showcluster) {
+            renderCluster(cluster, 255, 128, 128);
+            
+            for (var i=0; i<floatingclusters.length; i++) {
+                var col = Math.floor(100 + 100 * i / floatingclusters.length);
+                renderCluster(floatingclusters[i], col, col, col);
+            }
+        }
+        
+        
+        // Render pemain bola emoticon
+        renderPlayer();
+        
+        // Game berakhir
+        if (gamestate == gamestates.gameover) {
+            context.fillStyle = "rgba(0, 0, 0, 0.8)";
+            context.fillRect(level.x - 4, level.y - 4, level.width + 8, level.height + 2 * level.tileheight + 8 - yoffset);
+            
+            context.fillStyle = "#ffffff";
+            context.font = "40px Verdana";
+            drawCenterText("KAMU KALAHH!", level.x, level.y + level.height / 2 + 10, level.width);
+            context.fillStyle = "#ffffff";
+            context.font = "30px Verdana";
+            drawCenterText("Coba Lagi Kuy!!", level.x, level.y + level.height / 2 + 50, level.width);
+        }
+    }
+    
+    function drawFrame() {
+        // background
+        context.fillStyle = "   #DA70D6";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        
+        //header
+        context.fillStyle = "   #DA70D6";
+        context.fillRect(0, 0, canvas.width, 100);
+        
+        
+        //title
+        context.fillStyle = "#4B0082";
+        context.font = "30px Verdana";
+         drawCenterText("PERMAINAN AKAN DIMULAI GUYS!!", level.x, level.y + level.height / 2 + 10, level.width);
+
+        context.fillStyle = "#4B0082";
+        context.font = "20px Verdana";
+        context.fillText("RESPONSI MULTIMEDIA ONLINE A", 520, 27);
+       
+        context.fillStyle = "#4B0082";
+        context.font = "18px Verdana";
+        
+        context.fillText("MEIDA SAFIRA - 1800016025", 560, 57);
+        
+        // Display fps
+        context.fillStyle = "#4B0082";
+        context.font = "12px Verdana";
+        context.fillText("Fps: " + fps, 410, 77);
+    }
+    
+    // Render tiles
+    function renderTiles() {
+        // Atas ke bawah
+        for (var j=0; j<level.rows; j++) {
+            for (var i=0; i<level.columns; i++) {
+                // Mendapat tile
+                var tile = level.tiles[i][j];
+            
+                var shift = tile.shift;
+                
+                // Menghitung coordinat tile
+                var coord = getTileCoordinate(i, j);
+                
+                // Periksa apakah ada tile
+                if (tile.type >= 0) {
+                    //Mendukung transparansi
+                    context.save();
+                    context.globalAlpha = tile.alpha;
+                    
+                    // Gambar tile menggunakan warna
+                    drawBubble(coord.tilex, coord.tiley + shift, tile.type);
+                    
+                    context.restore();
+                }
+            }
+        }
+    }
+    
+    // Render cluster
+    function renderCluster(cluster, r, g, b) {
+        for (var i=0; i<cluster.length; i++) {
+            // Menghitung coordinat tile
+            var coord = getTileCoordinate(cluster[i].x, cluster[i].y);
+            
+            // gambar tile dengan warna
+            context.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
+            context.fillRect(coord.tilex+level.tilewidth/4, coord.tiley+level.tileheight/4, level.tilewidth/2, level.tileheight/2);
+        }
+    }
+    
+    // Render pemain bola emoticon
+    function renderPlayer() {
+        var centerx = player.x + level.tilewidth/2;
+        var centery = player.y + level.tileheight/2;
+        
+        // Gambar lingkaran latar belakang pemain
+        context.fillStyle = "#7a7a7a";
+        context.beginPath();
+        context.arc(centerx, centery, level.radius+12, 0, 2*Math.PI, false);
+        context.fill();
+        context.lineWidth = 2;
+        context.strokeStyle = "#8c8c8c";
+        context.stroke();
+
+        // Gambar angle
+        context.lineWidth = 2;
+        context.strokeStyle = "#0000ff";
+        context.beginPath();
+        context.moveTo(centerx, centery);
+        context.lineTo(centerx + 1.5*level.tilewidth * Math.cos(degToRad(player.angle)), centery - 1.5*level.tileheight * Math.sin(degToRad(player.angle)));
+        context.stroke();
+        
+        // Menggambar bola emoticon selanjutnya
+        drawBubble(player.nextbubble.x, player.nextbubble.y, player.nextbubble.tiletype);
+        
+        // Gambar bola emoticon
+        if (player.bubble.visible) {
+            drawBubble(player.bubble.x, player.bubble.y, player.bubble.tiletype);
+        }
+        
+    }
+    
+    // memperoleh koordinat tile
+    function getTileCoordinate(column, row) {
+        var tilex = level.x + column * level.tilewidth;
+        
+        // X offset untuk baris ganjil atau genap
+        if ((row + rowoffset) % 2) {
+            tilex += level.tilewidth/2;
+        }
+        
+        var tiley = level.y + row * level.rowheight;
+        return { tilex: tilex, tiley: tiley };
+    }
+    
+    // Dapatkan posisi grid terdekat
+    function getGridPosition(x, y) {
+        var gridy = Math.floor((y - level.y) / level.rowheight);
+        
+        //Memeriksa offset
+        var xoffset = 0;
+        if ((gridy + rowoffset) % 2) {
+            xoffset = level.tilewidth / 2;
+        }
+        var gridx = Math.floor(((x - xoffset) - level.x) / level.tilewidth);
+        
+        return { x: gridx, y: gridy };
+    }
+
+    
+    // Menggambar bola emoticon
+    function drawBubble(x, y, index) {
+        if (index < 0 || index >= bubblecolors)
+            return;
+        
+        context.drawImage(bubbleimage, index * 40, 0, 40, 40, x, y, level.tilewidth, level.tileheight);
+    }
+    
+    // mulai permainan baru
+    function newGame() {
+        // menyetel ulang skor
+        score = 0;
+        
+        turncounter = 0;
+        rowoffset = 0;
+        
+        // Atur gamestate menjadi siap
+        setGameState(gamestates.ready);
+
+        createLevel();
+
+        nextBubble();
+        nextBubble();
+    }
+    
+    // Buat level acak
+    function createLevel() {
+        // Buat level dengan tile acak
+        for (var j=0; j<level.rows; j++) {
+            var randomtile = randRange(0, bubblecolors-1);
+            var count = 0;
+            for (var i=0; i<level.columns; i++) {
+                if (count >= 2) {
+                    var newtile = randRange(0, bubblecolors-1);
+                    
+                    // Pastikan tile baru berbeda dari ubin sebelumnya
+                    if (newtile == randomtile) {
+                        newtile = (newtile + 1) % bubblecolors;
+                    }
+                    randomtile = newtile;
+                    count = 0;
+                }
+                count++;
+                
+                if (j < level.rows/2) {
+                    level.tiles[i][j].type = randomtile;
+                } else {
+                    level.tiles[i][j].type = -1;
+                }
+            }
+        }
+    }
+    
+    // Buat bola acak untuk pemain
+    function nextBubble() {
+        // Atur bola saat ini
+        player.tiletype = player.nextbubble.tiletype;
+        player.bubble.tiletype = player.nextbubble.tiletype;
+        player.bubble.x = player.x;
+        player.bubble.y = player.y;
+        player.bubble.visible = true;
+        
+        // Dapatkan tipe acak dari warna yang ada
+        var nextcolor = getExistingColor();
+        
+        // Atur bola berikutnya
+        player.nextbubble.tiletype = nextcolor;
+    }
+    
+    // Dapatkan warna acak yang ada
+    function getExistingColor() {
+        existingcolors = findColors();
+        
+        var bubbletype = 0;
+        if (existingcolors.length > 0) {
+            bubbletype = existingcolors[randRange(0, existingcolors.length-1)];
+        }
+        
+        return bubbletype;
+    }
+    
+    // Dapatkan int acak antara rendah dan tinggi, inklusif
+    function randRange(low, high) {
+        return Math.floor(low + Math.random()*(high-low+1));
+    }
+    
+    // tembak bola emoticon
+    function shootBubble() {
+        // Tembak bola ke arah mouse
+        player.bubble.x = player.x;
+        player.bubble.y = player.y;
+        player.bubble.angle = player.angle;
+        player.bubble.tiletype = player.tiletype;
+
+        // mengatur gamestate
+        setGameState(gamestates.shootbubble);
+    }
+    
+    // Periksa apakah dua lingkaran berpotongan
+    function circleIntersection(x1, y1, r1, x2, y2, r2) {
+        // Hitung jarak antar pusat
+        var dx = x1 - x2;
+        var dy = y1 - y2;
+        var len = Math.sqrt(dx * dx + dy * dy);
+        
+        if (len < r1 + r2) {
+            // Lingkaran berpotongan
+            return true;
+        }
+        
+        return false;
+    }
+    
+    // Ubah radian menjadi derajat
+    function radToDeg(angle) {
+        return angle * (180 / Math.PI);
+    }
+    
+    // Ubah derajat menjadi radian
+    function degToRad(angle) {
+        return angle * (Math.PI / 180);
+    }
+
+    // gerakan mouse
+    function onMouseMove(e) {
+        // Dapatkan posisi mouse
+        var pos = getMousePos(canvas, e);
+
+        // Dapatkan sudut mouse
+        var mouseangle = radToDeg(Math.atan2((player.y+level.tileheight/2) - pos.y, pos.x - (player.x+level.tilewidth/2)));
+
+        // Ubah rentang menjadi 0, 360 derajat
+        if (mouseangle < 0) {
+            mouseangle = 180 + (180 + mouseangle);
+        }
+
+        // Batasi sudut menjadi 8, 172 derajat
+        var lbound = 8;
+        var ubound = 172;
+        if (mouseangle > 90 && mouseangle < 270) {
+            // kiri
+            if (mouseangle > ubound) {
+                mouseangle = ubound;
+            }
+        } else {
+            // kanaan
+            if (mouseangle < lbound || mouseangle >= 270) {
+                mouseangle = lbound;
+            }
+        }
+
+        // Atur sudut pemain
+        player.angle = mouseangle;
+    }
+    
+    // Pada klik tombol mouse
+    function onMouseDown(e) {
+        // Dapatkan posisi mouse
+        var pos = getMousePos(canvas, e);
+        
+        if (gamestate == gamestates.ready) {
+            shootBubble();
+        } else if (gamestate == gamestates.gameover) {
+            newGame();
+        }
+    }
+    
+    // Dapatkan posisi mouse
+    function getMousePos(canvas, e) {
+        var rect = canvas.getBoundingClientRect();
+        return {
+            x: Math.round((e.clientX - rect.left)/(rect.right - rect.left)*canvas.width),
+            y: Math.round((e.clientY - rect.top)/(rect.bottom - rect.top)*canvas.height)
+        };
+    }
+    
+    // Panggil init untuk memulai permainan
+    init();
+	};
+
+	</script>
+</head>
+<body>
+    <canvas id="viewport" width="1330" height="640"></canvas></div>
+</body>
+
+</html> 
